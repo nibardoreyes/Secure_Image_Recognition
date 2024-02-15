@@ -1,0 +1,2 @@
+DE-10 D0 to PI gpio pin 17
+DE-10 ground GPIO pin 30 to Pi ground gpio pin 39
