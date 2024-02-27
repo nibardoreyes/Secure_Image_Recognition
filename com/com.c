@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdbool.h>
 #include "./address_map_arm.h"
 #include <sys/mman.h>
 
@@ -19,8 +20,8 @@ typedef union {
     {
         unsigned int gpio0 : 1;
         unsigned int gpio1 : 1;
-        unsigned int gpio2 : 4;
-        unsigned int gpio3 : 4;
+        unsigned int gpio2 : 1;
+        unsigned int gpio3 : 1;
         unsigned int gpio4 : 4;
         unsigned int gpio5 : 4;
         unsigned int gpiou : 11;
@@ -72,7 +73,8 @@ int unmap_physical(void *virtual_base, unsigned int span)
     return 0;
 }
 
-//Function that sends the words across to the pi(Currently working perfectly)
+//Function that sends the words across to the pi
+//(Can be a hit or miss)
 void send_binary_message(const char *message)
 {
     //Send synchronization signal (11111)
@@ -111,8 +113,111 @@ void send_binary_message(const char *message)
     }
 }
 
+//Works great
+//function that receives the binary message(just for testing)
+void receive_binary_message(void)
+{
+    printf("Receiving Message now\n");
+
+    //loop to receive bits
+    while (1)
+    {
+        gpioregister = (GpioRegister)(*gpio_ptr);
+        if (gpioregister.bits.gpio2 == 1)
+        {
+            printf("Received bit: 1\n");
+        }
+        else
+        {
+            printf("Received bit: 0\n");
+        }
+
+        usleep(100000);
+    }
+}
+
+//function that checks for synchronization signal(Works perfectly)
+int check_sync_signal(void)
+{
+    printf("Waiting for synchronization signal...\n");
+    int sync_sequence[6] = {0, 1, 0, 1, 0, 1};
+    int sync_index = 0;
+
+    while (1)
+    {
+        gpioregister = (GpioRegister)(*gpio_ptr);
+        usleep(100000); //delay matches pi code
+
+        if (gpioregister.bits.gpio2 == sync_sequence[sync_index])
+        {
+            sync_index++;
+            if (sync_index == 6)
+            {
+                printf("Synchronization signal detected\n");
+                return 1;//exit loop and return 1
+            }
+        }
+        else
+        {
+            sync_index = 0; //reset sync index if sequence is broken
+        }
+    }
+}
 
 
+//Works well(can be a hit or miss)
+void receive_binary_message1(void) {
+    if (!check_sync_signal()) {
+        printf("Synchronization signal not detected\n");
+        return; //exit function if synchronization signal not detected
+    }
+
+    printf("Starting message reception...\n");
+
+    char message[100]; //array to store the received message characters
+    int index = 0; //index to keep track of the current position in the message array
+
+    unsigned char byte = 0; //variable to accumulate bits into a byte
+    int bit_count = 0; //counter to keep track of the number of bits accumulated
+
+    while (1) {
+        GpioRegister gpioregister = (GpioRegister)(*gpio_ptr);
+        int value_received = gpioregister.bits.gpio1; //read input from gpio1
+        usleep(100000); //do not change this
+
+        // Accumulate bits to form a byte
+        byte = (byte << 1) | value_received;
+        bit_count++; // Increment bit counter
+
+        if (bit_count == 8) {
+            //check termination condition before adding the byte to message
+        	//termination signal is (11111111)
+            if (byte == 0xFF) {
+                printf("Received termination sequence...\n");
+                break; //exit loop if termination condition met
+            }
+
+            //store the byte in the message array and print it for debugging
+            message[index++] = byte; //add the byte to the message array
+            printf("Byte: ");
+            for (int i = 7; i >= 0; i--) {
+                printf("%d", (byte >> i) & 1);
+            }
+            printf(" - Character: %c\n", byte);
+
+            //reset for next byte
+            byte = 0;
+            bit_count = 0;
+
+        }
+        usleep(1000000);
+    }
+
+    message[index] = '\0';
+
+    //print the complete message
+    printf("Received message: %s\n", message);
+}
 
 int main()
 {
@@ -132,7 +237,7 @@ int main()
         return (-1);
     }
 
-    //Connecting to the gpio and setting it to an output
+    //Connecting to the gpio and setting gpio0 as an output
     gpio_ptr = (unsigned int *)(LW_virtual + JP1_BASE);
     *(volatile unsigned int *)(LW_virtual + JP1_BASE + 4) |= (1 << 0);
 
@@ -141,8 +246,36 @@ int main()
 
 
 
-    // Send the binary message "hello" to GPIO pin 17
-    send_binary_message("HelloWorld12345!");
+   int choice;
+
+       while (1) {
+           printf("How would you like communicate:\n");
+           printf("1. Send binary message\n");
+           printf("2. Receive binary message\n");
+           printf("3. Exit\n");
+           scanf("%d", &choice);
+
+           switch (choice) {
+               case 1:
+                   send_binary_message("HelloWorld123");
+                   break;
+               case 2:
+                   receive_binary_message1();
+                   break;
+               case 3:
+                   printf("Exiting...\n");
+                   return 0;
+               default:
+                   printf("Invalid choice. Choose from one of the options.");
+           }
+
+           printf("\nPress enter to make a new choice.\n");
+           while (getchar() != '\n');
+           getchar(); //wait for user to press enter
+       }
+
+
+
 
     // Unmap the memory and close /dev/mem
     unmap_physical(LW_virtual, LW_BRIDGE_SPAN);
